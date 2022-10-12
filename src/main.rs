@@ -1,16 +1,18 @@
 #![feature(core_intrinsics)]
 
-use std::intrinsics::size_of;
-
-use crate::git::git_ver;
-use crate::util::proc::{OutputMessage, RawOutputMessage};
+use crate::git::{check_git, GitRepository};
+use crate::util::proc::RawOutputMessage;
 
 mod git;
 mod util;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
-	println!("{}", size_of::<Vec<u8>>());
-	println!("{}", size_of::<RawOutputMessage>());
-	println!("Hello, {:?}!", git_ver().await);
+async fn main() -> anyhow::Result<()> {
+	tracing_subscriber::fmt().init();
+	let mut log = GitRepository::new(".").log()?;
+	println!("{:?}", log.next().await);
+
+	check_git().await;
+
+	Ok(())
 }

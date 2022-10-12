@@ -1,11 +1,11 @@
 use std::ffi::OsStr;
-use std::fmt::{Debug, Display, Formatter, Write};
+use std::fmt::{Debug, Display};
+use std::path::Path;
 use std::process::Stdio;
-use std::string::FromUtf8Error;
 
 use tokio::io;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 pub enum RawOutputMessage {
 	Success(Vec<u8>),
@@ -51,14 +51,21 @@ pub enum OutputMessage {
 	Error(String),
 }
 
-pub async fn run_process(cmd: impl AsRef<OsStr>, args: impl IntoIterator<Item=impl AsRef<OsStr>>) -> io::Result<RawOutputMessage> {
-	let mut child = Command::new(cmd)
+pub fn spawn(cmd: impl AsRef<OsStr>, args: impl IntoIterator<Item=impl AsRef<OsStr>>, cwd: impl AsRef<Path>) -> io::Result<Child> {
+	Command::new(cmd)
+		.kill_on_drop(true)
 		.args(args)
+		.current_dir(cwd)
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
-		.spawn()?;
+		.spawn()
+}
+
+pub async fn run_process(cmd: impl AsRef<OsStr>, args: impl IntoIterator<Item=impl AsRef<OsStr>>, cwd: impl AsRef<Path>) -> io::Result<RawOutputMessage> {
+	let mut child = spawn(cmd, args, cwd)?;
 	let status = child.wait().await?;
+
 	if status.success() {
 		let mut buffer = Vec::new();
 		let mut out = child.stdout.take().unwrap();
