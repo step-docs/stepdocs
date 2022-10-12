@@ -17,7 +17,7 @@ impl GitRepository {
 	}
 
 	pub fn log(&self) -> io::Result<GitLogParser> {
-		let mut child = spawn("git", ["log", "--all", "--pretty=format:'%H%n%aN <%aE>%n%ad%n%f%n==END=='"], &self.0)?;
+		let mut child = spawn("git", ["log", "--all", "--pretty=format:%H%n%aN <%aE>%n%ad%n%f%n==END=="], &self.0)?;
 		let stdout = child.stdout.take().unwrap();
 		Ok(GitLogParser::new(child, stdout))
 	}
