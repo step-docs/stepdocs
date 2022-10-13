@@ -15,10 +15,10 @@ pub struct GitLogParser {
 
 #[derive(Debug)]
 pub struct GitLog {
-	hash: String,
-	author: String,
-	message: String,
-	date: String,
+	pub	hash: String,
+	pub	author: String,
+	pub	message: String,
+	pub	date: String,
 }
 
 macro_rules! read_or_none {
@@ -35,7 +35,7 @@ macro_rules! read_or_none {
 impl AsyncIterator<io::Error> for GitLogParser {
 	type Item = GitLog;
 
-	fn next<'a>(&'a mut self) -> Pin<Box<dyn Future<Output=Result<Option<Self::Item>, Error>> + Send + 'a>> {
+	fn next<'a>(&'a mut self) -> Pin<Box<dyn Future<Output=Result<Option<Self::Item>, Error>> + 'a>> {
 		Box::pin(self.next_log())
 	}
 }
