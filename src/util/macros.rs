@@ -10,3 +10,12 @@ macro_rules! read_or_none {
 		}
     };
 }
+
+#[macro_export]
+macro_rules! read_async {
+    ($self:ident, $line:ident) => {
+	    {
+		    tokio::io::AsyncBufReadExt::read_line(&mut $self.inner, &mut $line).await?
+	    }
+    };
+}
