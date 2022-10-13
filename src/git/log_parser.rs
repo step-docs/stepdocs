@@ -3,13 +3,14 @@ use std::io;
 use std::io::Error;
 use std::pin::Pin;
 
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::process::{Child, ChildStdout};
+use crate::read_or_none;
 
 use crate::util::iter::AsyncIterator;
 
 pub struct GitLogParser {
-	child: Child,
+	_child: Child,
 	inner: BufReader<ChildStdout>,
 }
 
@@ -21,17 +22,6 @@ pub struct GitLog {
 	pub	date: String,
 }
 
-macro_rules! read_or_none {
-    ($self:ident, $line:ident) => {
-		if 0 == $self.inner.read_line(&mut $line).await? {
-			return Ok(None);
-		}
-		if $line.ends_with(|it:char| it.is_whitespace()) {
-	        let _ = $line.pop();
-		}
-    };
-}
-
 impl AsyncIterator<io::Error> for GitLogParser {
 	type Item = GitLog;
 
@@ -41,9 +31,9 @@ impl AsyncIterator<io::Error> for GitLogParser {
 }
 
 impl GitLogParser {
-	pub fn new(child: Child, stdout: ChildStdout) -> Self {
+	pub fn new(_child: Child, stdout: ChildStdout) -> Self {
 		Self {
-			child,
+			_child,
 			inner: BufReader::new(stdout),
 		}
 	}

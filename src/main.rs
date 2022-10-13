@@ -10,8 +10,8 @@ mod util;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
 	tracing_subscriber::fmt().init();
-	let mut log = GitRepository::new(".").log()?;
-	let res = log.filter(|_| true).collect().await?;
+	let mut diffs = GitRepository::new(".").show("HEAD~1")?;
+	let res=diffs.next_diff().await?;
 	println!("{res:?}");
 	//println!("{:?}", log.next_log().await);
 	check_git().await;

@@ -6,6 +6,7 @@ use crate::util::proc::{RawOutputMessage, run_process};
 
 mod repo;
 mod log_parser;
+mod diff;
 
 pub use repo::GitRepository;
 pub use log_parser::GitLogParser;
