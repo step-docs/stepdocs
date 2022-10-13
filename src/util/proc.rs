@@ -1,11 +1,13 @@
 use std::ffi::OsStr;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug};
 use std::path::Path;
 use std::process::Stdio;
 
+use bstr::BStr;
 use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
+use tracing::warn;
 
 pub enum RawOutputMessage {
 	Success(Vec<u8>),
@@ -75,6 +77,7 @@ pub async fn run_process(cmd: impl AsRef<OsStr>, args: impl IntoIterator<Item=im
 		let mut buffer = Vec::new();
 		let mut out = child.stderr.take().unwrap();
 		out.read_to_end(&mut buffer).await?;
+		warn!("Child error: {}", BStr::new(&buffer));
 		Ok(RawOutputMessage::Error(buffer))
 	}
 }

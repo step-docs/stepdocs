@@ -1,7 +1,12 @@
+use std::future::Future;
 use std::io;
+use std::io::Error;
+use std::pin::Pin;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStdout};
+
+use crate::util::iter::AsyncIterator;
 
 pub struct GitLogParser {
 	child: Child,
@@ -21,8 +26,18 @@ macro_rules! read_or_none {
 		if 0 == $self.inner.read_line(&mut $line).await? {
 			return Ok(None);
 		}
-	    let _ = $line.pop();
+		if $line.ends_with(|it:char| it.is_whitespace()) {
+	        let _ = $line.pop();
+		}
     };
+}
+
+impl AsyncIterator<io::Error> for GitLogParser {
+	type Item = GitLog;
+
+	fn next<'a>(&'a mut self) -> Pin<Box<dyn Future<Output=Result<Option<Self::Item>, Error>> + Send + 'a>> {
+		Box::pin(self.next_log())
+	}
 }
 
 impl GitLogParser {
@@ -33,7 +48,7 @@ impl GitLogParser {
 		}
 	}
 
-	pub async fn next(&mut self) -> io::Result<Option<GitLog>> {
+	pub async fn next_log(&mut self) -> io::Result<Option<GitLog>> {
 		let mut line = String::with_capacity(64);
 		while line.trim().is_empty() {
 			read_or_none!(self, line);
