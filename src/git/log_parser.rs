@@ -3,10 +3,11 @@ use std::io;
 use std::io::Error;
 use std::pin::Pin;
 
+use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::{Child, ChildStdout};
-use crate::read_or_none;
 
+use crate::read_or_none;
 use crate::util::iter::AsyncIterator;
 
 pub struct GitLogParser {
@@ -16,10 +17,10 @@ pub struct GitLogParser {
 
 #[derive(Debug)]
 pub struct GitLog {
-	pub	hash: String,
-	pub	author: String,
-	pub	message: String,
-	pub	date: String,
+	pub hash: String,
+	pub author: String,
+	pub message: String,
+	pub date: String,
 }
 
 impl AsyncIterator<io::Error> for GitLogParser {

@@ -1,11 +1,11 @@
 use bstr::ByteSlice;
 
 use crate::git::{check_git, GitRepository};
-use crate::util::iter::AsyncIterator;
 use crate::util::proc::RawOutputMessage;
 
 mod git;
 mod util;
+mod generator;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {

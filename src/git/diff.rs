@@ -1,4 +1,3 @@
-use std::iter::Peekable;
 use std::ops::Range;
 
 use tokio::io;
@@ -7,17 +6,18 @@ use tokio::process::{Child, ChildStdout};
 use tracing::warn;
 
 use crate::read_or_none;
+use crate::util::peekable_reader::PeekableLine;
 
 pub struct GitDiffParser {
 	_child: Child,
-	inner: Peekable<BufReader<ChildStdout>>,
+	inner: PeekableLine<ChildStdout>,
 }
 
 impl GitDiffParser {
 	pub fn new(_child: Child, stdout: ChildStdout) -> Self {
 		Self {
 			_child,
-			inner: Iterator::peekable(BufReader::new(stdout)),
+			inner: PeekableLine::new(BufReader::new(stdout)),
 		}
 	}
 
@@ -178,10 +178,10 @@ impl Patch {
 		Self { raw_diff: diff, index }
 	}
 
-	pub fn get_index(&self, index: usize) -> Option<&str> {
-		let index: Range<usize> = self.index.get(index)?.into();
-		Some(&self.raw_diff[index])
-	}
+	// pub fn get_index(&self, index: usize) -> Option<&str> {
+	// 	let index: Range<usize> = self.index.get(index)?.into();
+	// 	Some(&self.raw_diff[index])
+	// }
 }
 
 #[cfg(feature = "test_data")]

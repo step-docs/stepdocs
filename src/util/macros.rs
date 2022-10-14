@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! read_or_none {
     ($self:ident, $line:ident) => {
-		if 0 == tokio::io::AsyncBufReadExt::read_line(&mut $self.inner, &mut $line).await? {
+		if 0 == $self.inner.read_line(&mut $line).await? {
 			tracing::trace!("EOF");
 			return Ok(None);
 		}
@@ -15,7 +15,7 @@ macro_rules! read_or_none {
 macro_rules! read_async {
     ($self:ident, $line:ident) => {
 	    {
-		    tokio::io::AsyncBufReadExt::read_line(&mut $self.inner, &mut $line).await?
+		    $self.inner.read_line(&mut $line).await?
 	    }
     };
 }
