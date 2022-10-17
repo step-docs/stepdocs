@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::fmt::{Debug, Display, Formatter};
+use std::future::Future;
+use std::ops::{Deref, Range};
+use std::pin::Pin;
 
 use tokio::io;
 use tokio::io::BufReader;
@@ -6,7 +9,9 @@ use tokio::process::{Child, ChildStdout};
 use tracing::warn;
 
 use crate::read_or_none;
+use crate::util::iter::AsyncIterator;
 use crate::util::peekable_reader::PeekableLine;
+use crate::util::string::StringExt;
 
 pub struct GitDiffParser {
 	_child: Child,
@@ -21,7 +26,7 @@ impl GitDiffParser {
 		}
 	}
 
-	/// TODO: redesign 
+	/// Get next patch set from git 
 	pub async fn next_diff(&mut self) -> io::Result<Option<DiffInfo>> {
 		let mut command = String::with_capacity(64);
 		read_or_none!(self, command);
@@ -52,66 +57,76 @@ impl GitDiffParser {
 		};
 
 		buf.clear();
-		let mut diff_str = String::new();
-		//self.inner.read_to_string(&mut diff_str).await?;
-		/*loop {
-			let len = read_async!(self, buf);
-			if len == 0 { break; }
-			// collect diff step
-			if buf.starts_with("@@") {
-				// TODO: handle @@ ... @@ <message>
-				if !buf.ends_with("@@") {
-					if let Some(off) = buf[2..].find("@@") {
-						// message was
-						// @@ ... @@ <message>
-						println!("{} {}", off, buf);
+		// miminum diff = 7 lines * 32 chars[max=120]
+		let mut diff_str = String::with_capacity(8 * 32);
+		let mut diff_idx: Vec<(DiffOffset, Vec<PatchIndex>)> = Vec::new();
+		let mut patch_idx: Vec<PatchIndex> = Vec::with_capacity(16);
+
+		let inner = &mut self.inner;
+		let mut diff_offset: DiffOffset = DiffOffset::default();
+		loop {
+			let _peek = inner.peek_line().await?;
+			let peek = _peek.trim_end_matches(['\n']);
+			// end of diff for this file
+			if peek.is_empty() || peek.starts_with("diff") { break; }
+			if peek.starts_with("@@") {
+				if peek.ends_with("@@") {
+					if !diff_offset.is_zero() {
+						diff_idx.push((diff_offset, patch_idx));
+						patch_idx = Vec::with_capacity(16);
+					}
+					diff_offset = match DiffOffset::parse(peek) {
+						Some(it) => { it }
+						None => {
+							warn!("Illegal offset info {:?}",peek);
+							return Ok(None);
+						}
+					};
+					inner.consume_peek();
+					continue;
+				} else {
+					let end_cursor = peek.drop(2).find("@@");
+					if let Some(end) = end_cursor {
+						if !diff_offset.is_zero() {
+							diff_idx.push((diff_offset, patch_idx));
+							patch_idx = Vec::with_capacity(16);
+						}
+						let marker = &peek[..end + 4];
+						diff_offset = match DiffOffset::parse(marker) {
+							Some(val) => { val }
+							None => {
+								warn!("Illegal offset info {:?}",peek);
+								return Ok(None);
+							}
+						};
+						diff_str.push_str(&peek[end + 4..]);
+						inner.consume_peek();
+						continue;
 					} else {
-						warn!("Diff: Wrong diff offset expect `@@ N,N N,N @@` found `{}`", buf);
+						warn!("Illegal token {:?}",peek);
 						return Ok(None);
 					}
 				}
 			}
-			let mut offset = DiffOffset {
-				source_start: 0,
-				source_lines: 0,
-				target_start: 0,
-				target_lines: 0,
-			};
-			let mut offs = buf.splitn(4, ' ');
-			offs.next();// @@
-			let src = offs.next();
-			let tar = offs.next();
 
-			if let (Some(source), Some(target)) = (src, tar) {
-				let src = source
-					.trim_start_matches(['+', '-'])
-					.splitn(2, ',')
-					.map(|it| it.parse::<i64>().unwrap_or_default().unsigned_abs())
-					.collect::<Vec<_>>();
-				let tar = target
-					.trim_start_matches(['+', '-'])
-					.splitn(2, ',')
-					.map(|it| it.parse::<i64>().unwrap_or_default().unsigned_abs())
-					.collect::<Vec<_>>();
-				if src.len() != 2 || tar.len() != 2 {
-					warn!("Diff: Wrong offset message `{}`", buf);
-					return Ok(None);
-				}
-
-				offset.source_start = src[0];
-				offset.source_lines = src[1];
-
-				offset.target_start = tar[0];
-				offset.target_lines = tar[1];
-			} else {
-				warn!("Diff: Wrong offset message `{}`", buf);
-				return Ok(None);
-			}
-			// TODO: uncomment
-			break;
-		}*/
-
-		// TODO: read diff message
+			let start = diff_str.len();
+			diff_str.push_str(_peek);
+			patch_idx.push(PatchIndex {
+				typ: match _peek.chars().next() {
+					Some(' ') => DiffType::None,
+					Some('+') => DiffType::Add,
+					Some('-') => DiffType::Remove,
+					_ => {
+						warn!("Invalid patch {:?}",_peek);
+						return Ok(None);
+					}
+				},
+				start,
+				end: diff_str.len() - 1,
+			});
+			inner.consume_peek();
+		}
+		diff_idx.push((diff_offset, patch_idx));
 		Ok(
 			Some(DiffInfo {
 				command,
@@ -119,9 +134,17 @@ impl GitDiffParser {
 				target,
 				new_file,
 				index,
-				diffs: Patch::parse(diff_str),
+				diffs: Patch::new_with_index(diff_str, diff_idx),
 			})
 		)
+	}
+}
+
+impl AsyncIterator<io::Error> for GitDiffParser {
+	type Item = DiffInfo;
+
+	fn next<'a>(&'a mut self) -> Pin<Box<dyn Future<Output=Result<Option<Self::Item>, io::Error>> + 'a>> {
+		Box::pin(self.next_diff())
 	}
 }
 
@@ -135,7 +158,7 @@ pub struct DiffInfo {
 	pub diffs: Patch,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DiffOffset {
 	pub source_start: u64,
 	pub source_lines: u64,
@@ -143,10 +166,56 @@ pub struct DiffOffset {
 	pub target_lines: u64,
 }
 
+impl DiffOffset {
+	pub fn is_zero(&self) -> bool {
+		self.source_start == 0
+			&& self.source_lines == 0
+			&& self.target_start == 0
+			&& self.target_lines == 0
+	}
+}
+
+impl DiffOffset {
+	pub fn parse(token: &str) -> Option<Self> {
+		let offset: DiffOffset;
+		let mut offs = token.splitn(4, ' ');
+		let _ = offs.next();// @@
+		let src = offs.next();
+		let tar = offs.next();
+
+		if let (Some(source), Some(target)) = (src, tar) {
+			let (source_start, source_lines) = Self::parse_section(source)?;
+			let (target_start, target_lines) = Self::parse_section(target)?;
+
+			offset = DiffOffset {
+				source_start,
+				source_lines,
+				target_start,
+				target_lines,
+			}
+		} else {
+			warn!("Diff: Wrong offset message `{}`", token);
+			return None;
+		}
+		Some(offset)
+	}
+
+	fn parse_section(token: &str) -> Option<(u64, u64)> {
+		let (line, lines) = token.split_at(token.find(',')?);
+		let lines = &lines[1..];
+		Some(
+			(
+				line.trim_start_matches(['-', '+']).parse::<u64>().ok()?,
+				lines.trim_start_matches(['-', '+']).parse::<u64>().ok()?
+			)
+		)
+	}
+}
+
 #[derive(Debug)]
 pub struct Patch {
 	raw_diff: String,
-	index: Vec<(DiffOffset, Vec<DiffIndex>)>,
+	index: Vec<(DiffOffset, Vec<PatchIndex>)>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -157,14 +226,14 @@ enum DiffType {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct DiffIndex {
+pub(crate) struct PatchIndex {
 	typ: DiffType,
 	start: usize,
 	end: usize,
 }
 
-impl From<&DiffIndex> for Range<usize> {
-	fn from(value: &DiffIndex) -> Self {
+impl From<&PatchIndex> for Range<usize> {
+	fn from(value: &PatchIndex) -> Self {
 		value.start..value.end
 	}
 }
@@ -174,17 +243,52 @@ impl Patch {
 		Self { raw_diff: diff, index: vec![] }
 	}
 
-	pub(crate) fn new_with_index(diff: String, index: Vec<(DiffOffset, Vec<DiffIndex>)>) -> Self {
+	pub(crate) fn new_with_index(diff: String, index: Vec<(DiffOffset, Vec<PatchIndex>)>) -> Self {
 		Self { raw_diff: diff, index }
 	}
 
-	// pub fn get_index(&self, index: usize) -> Option<&str> {
-	// 	let index: Range<usize> = self.index.get(index)?.into();
-	// 	Some(&self.raw_diff[index])
-	// }
+	pub fn patches(&self) -> usize {
+		self.index.len()
+	}
+
+	pub fn get_patch(&self, index: usize) -> Option<PatchInfo> {
+		let (offset, index) = self.index.get(index)?;
+		let content_ptr = index.first().map(|it| it.start).unwrap_or_default();
+		let content_end = index.last().map(|it| it.end).unwrap_or_default();
+		Some(PatchInfo {
+			offset,
+			index,
+			content_ptr,
+			contents: &self.raw_diff[content_ptr..content_end],
+		})
+	}
+
+	pub fn get_index(&self, patch: usize, index: usize) -> Option<&str> {
+		let (_, idx) = self.index.get(patch)?;
+		let offset: Range<usize> = idx.get(index)?.into();
+		Some(&self.raw_diff[offset])
+	}
 }
 
-#[cfg(feature = "test_data")]
+#[derive(Debug)]
+pub struct PatchInfo<'a> {
+	pub offset: &'a DiffOffset,
+	index: &'a [PatchIndex],
+	/// position of first offset in content
+	content_ptr: usize,
+	/// information of this patch
+	contents: &'a str,
+}
+
+impl<'a> PatchInfo<'a> {
+	pub fn get_line(&self, line: usize) -> Option<&str> {
+		let ptr = self.index.get(line)?;
+		let range: Range<usize> = (ptr.start - self.content_ptr)..(ptr.end - self.content_ptr);
+		Some(&self.contents[range])
+	}
+}
+
+#[cfg(test)]
 mod test_data {
 	const DIFF_SINGLE: &'static str = r#"diff --git a/src/git/log_parser.rs b/src/git/log_parser.rs
 index ec5f84e..c5a6ad4 100644
