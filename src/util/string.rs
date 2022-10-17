@@ -1,5 +1,7 @@
 pub trait StringExt {
+	/// remove first n character(s)
 	fn drop(&self, n: usize) -> &str;
+	/// Remove last n character(s)
 	fn drop_last(&self, n: usize) -> &str;
 }
 
