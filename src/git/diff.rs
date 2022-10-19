@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::future::Future;
+use std::io::BufRead;
 use std::ops::{Deref, Range};
 use std::pin::Pin;
 
@@ -11,7 +12,7 @@ use tracing::warn;
 use crate::read_or_none;
 use crate::util::iter::AsyncIterator;
 use crate::util::peekable_reader::PeekableLine;
-use crate::util::string::StringExt;
+use crate::util::string::{StringExt, swap_byte};
 
 pub struct GitDiffParser {
 	_child: Child,
@@ -218,7 +219,7 @@ pub struct Patch {
 	index: Vec<(DiffOffset, Vec<PatchIndex>)>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum DiffType {
 	Add,
 	Remove,
@@ -239,8 +240,76 @@ impl From<&PatchIndex> for Range<usize> {
 }
 
 impl Patch {
-	pub fn parse(diff: String) -> Self {
-		Self { raw_diff: diff, index: vec![] }
+	pub fn parse(diff: String) -> Result<Self, String> {
+		let mut index = Vec::with_capacity(16);
+		let mut reader = std::io::BufReader::new(diff.as_bytes()).lines().peekable();
+		let mut patch_idx: Vec<PatchIndex> = Vec::with_capacity(16);
+		let mut off = 0;
+		let mut diff_offset: DiffOffset = DiffOffset::default();
+		while let Some(line) = reader.peek() {
+			let _peek = line.as_ref().unwrap();
+			let peek = _peek.trim_end_matches(['\n']);
+			// end of diff for this file
+			if peek.is_empty() || peek.starts_with("diff") { break; }
+			if peek.starts_with("@@") {
+				if peek.ends_with("@@") {
+					if !diff_offset.is_zero() {
+						index.push((diff_offset, patch_idx));
+						patch_idx = Vec::with_capacity(16);
+					}
+					diff_offset = match DiffOffset::parse(peek) {
+						Some(it) => { it }
+						None => {
+							warn!("Illegal offset info {:?}",peek);
+							return Err(diff);
+						}
+					};
+					reader.next();
+					continue;
+				} else {
+					let end_cursor = peek.drop(2).find("@@");
+					if let Some(end) = end_cursor {
+						if !diff_offset.is_zero() {
+							index.push((diff_offset, patch_idx));
+							patch_idx = Vec::with_capacity(16);
+						}
+						let marker = &peek[..end + 4];
+						diff_offset = match DiffOffset::parse(marker) {
+							Some(val) => { val }
+							None => {
+								warn!("Illegal offset info {:?}",peek);
+								return Err(diff);
+							}
+						};
+						off += peek.len() - (end + 4);
+						reader.next();
+						continue;
+					} else {
+						warn!("Illegal token {:?}",peek);
+						return Err(diff);
+					}
+				}
+			}
+
+			let start = off;
+			off += _peek.len();
+			patch_idx.push(PatchIndex {
+				typ: match _peek.chars().next() {
+					Some(' ') => DiffType::None,
+					Some('+') => DiffType::Add,
+					Some('-') => DiffType::Remove,
+					_ => {
+						warn!("Invalid patch {:?}",_peek);
+						return Err(diff);
+					}
+				},
+				start,
+				end: off - 1,
+			});
+			reader.next();
+		}
+		index.push((diff_offset, patch_idx));
+		Ok(Self { raw_diff: diff, index })
 	}
 
 	pub(crate) fn new_with_index(diff: String, index: Vec<(DiffOffset, Vec<PatchIndex>)>) -> Self {
@@ -268,6 +337,38 @@ impl Patch {
 		let offset: Range<usize> = idx.get(index)?.into();
 		Some(&self.raw_diff[offset])
 	}
+
+	fn normalize_patch(&mut self, patch: usize) {
+		let mut swap_idx = (0, 0);
+		let mut swap_line = (0, 0);
+		{
+			let (_, index) = if let Some(it) = self.index.get(patch) { it } else {
+				return;
+			};
+			if index.len() > 2 {
+				let first_remove = index.iter().position(|it| it.typ == DiffType::Remove);
+				let last_add = index.iter().rposition(|it| it.typ == DiffType::Add);
+				if let (Some(first), Some(last)) = (first_remove, last_add) {
+					if let (Some(left), Some(right)) = (self.get_index(patch, first), self.get_index(patch, last)) {
+						if left == right {
+							swap_line.0 = first;
+							swap_line.1 = last;
+							swap_idx.0 = index.get(first).unwrap().start;
+							swap_idx.1 = index.get(last).unwrap().end;
+						}
+					}
+				}
+			}
+		}
+
+		if swap_line.1 != 0 && swap_idx.1 != 0 {
+			swap_byte(&mut self.raw_diff, swap_idx.0, swap_idx.1);
+			if let Some((_, index)) = self.index.get_mut(patch) {
+				index.get_mut(swap_line.0).unwrap().typ = DiffType::None;
+				index.get_mut(swap_line.1).unwrap().typ = DiffType::Add;
+			};
+		}
+	}
 }
 
 #[derive(Debug)]
@@ -290,6 +391,11 @@ impl<'a> PatchInfo<'a> {
 
 #[cfg(test)]
 mod test_data {
+	const SHOULD_NORMALIZE_PATCH: &str = r#"-}
++
++ hello
++}"#;
+
 	const DIFF_SINGLE: &'static str = r#"diff --git a/src/git/log_parser.rs b/src/git/log_parser.rs
 index ec5f84e..c5a6ad4 100644
 --- a/src/git/log_parser.rs

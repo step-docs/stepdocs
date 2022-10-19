@@ -1,15 +1,16 @@
 use std::process::exit;
 
-use bstr::{ByteSlice, ByteVec};
+use bstr::{ByteSlice};
+
+pub use diff::*;
+pub use log_parser::GitLogParser;
+pub use repo::GitRepository;
 
 use crate::util::proc::{RawOutputMessage, run_process};
 
 mod repo;
 mod log_parser;
 mod diff;
-
-pub use repo::GitRepository;
-pub use log_parser::GitLogParser;
 
 pub async fn git_ver() -> Option<String> {
 	let output: RawOutputMessage = run_process("git", ["-v"], ".").await.into();

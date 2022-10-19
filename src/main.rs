@@ -1,6 +1,6 @@
 use bstr::ByteSlice;
 
-use crate::git::{check_git, GitRepository};
+use crate::git::{check_git, GitRepository, Patch};
 use crate::util::proc::RawOutputMessage;
 
 mod git;
@@ -20,6 +20,13 @@ async fn main() -> anyhow::Result<()> {
 			println!("{:?}", it.diffs.get_patch(0));
 		}
 	}
+	
+	let  patch = Patch::parse(r#"@@ -1,1 +3,3 @@
+-}
++
++ hello
++}"#.to_string());
+	println!("{:?}", patch);
 	//println!("{:?}", log.next_log().await);
 	check_git().await;
 
