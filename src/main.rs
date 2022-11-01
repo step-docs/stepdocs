@@ -14,18 +14,18 @@ async fn main() -> anyhow::Result<()> {
 	let res = diffs.next_diff().await?;
 	println!("{res:#?}");
 
-/*	match res {
-		None => {}
-		Some(it) => {
-			println!("{:?}", it.diffs.get_patch(0));
-		}
-	}*/
-	
-	let mut patch = Patch::parse(r#"@@ -1,1 +3,3 @@
+	/*	match res {
+			None => {}
+			Some(it) => {
+				println!("{:?}", it.diffs.get_patch(0));
+			}
+		}*/
+
+	let mut patch = Patch::parse(r#"@@ -1,1 +1,4 @@
 -}
 +
 + hello
- }
++}
 "#.to_string()).unwrap();
 	println!("{:?}", patch);
 	println!("{:?}", patch.get_patch(0));

@@ -350,7 +350,7 @@ impl Patch {
 			};
 			if index.len() > 2 {
 				let first_remove = index.iter().position(|it| it.typ == DiffType::Remove);
-				let last_add = index.iter().rposition(|it| it.typ == DiffType::Add).map(|it| it + 1);
+				let last_add = index.iter().rposition(|it| it.typ == DiffType::Add);
 				if let (Some(first), Some(last)) = (first_remove, last_add) {
 					if let (Some(left), Some(right)) = (self.get_index(patch, first), self.get_index(patch, last)) {
 						if left.drop(1) == right.drop(1) {
@@ -389,23 +389,48 @@ pub struct PatchInfo<'a> {
 impl<'a> PatchInfo<'a> {
 	pub fn get_line(&self, line: usize) -> Option<&str> {
 		let ptr = self.index.get(line)?;
-		let range: Range<usize> = (ptr.start - self.content_ptr)..(ptr.end - self.content_ptr);
+		let content = self.content_ptr;
+		let range: Range<usize> = (ptr.start - content)..(ptr.end - content);
 		Some(&self.contents[range])
+	}
+
+	pub fn is_valid(&self) -> bool {
+		let DiffOffset { source_lines, target_lines, .. } = self.offset;
+		self.source_lines() as u64 == *source_lines
+			&& self.patch_lines() as u64 == *target_lines
+	}
+
+	pub fn source_lines(&self) -> usize {
+		self.index.iter().fold(0i128, |r, it| match it.typ {
+			DiffType::Add => r,
+			DiffType::Remove => r + 1,
+			DiffType::None => r + 1,
+		}) as _
+	}
+
+	pub fn output_lines(&self) -> usize {
+		self.index.iter().fold(0i128, |r, it| match it.typ {
+			DiffType::Add => r + 1,
+			DiffType::Remove => r,
+			DiffType::None => r,
+		}) as _
+	}
+
+	pub fn patch_lines(&self) -> usize {
+		self.index.len()
 	}
 }
 
 #[cfg(test)]
 mod test_data {
+	use crate::git::Patch;
+
 	const SHOULD_NORMALIZE_PATCH: &str = r#"-}
 +
 + hello
 +}"#;
 
-	const DIFF_SINGLE: &'static str = r#"diff --git a/src/git/log_parser.rs b/src/git/log_parser.rs
-index ec5f84e..c5a6ad4 100644
---- a/src/git/log_parser.rs
-+++ b/src/git/log_parser.rs
-@@ -1,8 +1,13 @@
+	const PATCH_SINGLE: &'static str = r#"@@ -1,8 +1,13 @@
 +use std::future::Future;
  use std::io;
 +use std::io::Error;
@@ -572,4 +597,18 @@ index e84d72c..deb7906 100644
  }
 \ No newline at end of file
 "#;
+
+	#[test]
+	fn test_patch() {
+		let patch = Patch::parse(PATCH_SINGLE.to_string());
+		assert!(patch.is_ok());
+		let patch = patch.unwrap();
+		assert_eq!(patch.patches(), 2);
+		let inner = patch.get_patch(0);
+		assert!(inner.is_some());
+		let inner = inner.unwrap();
+		assert!(inner.is_valid());
+		println!("{:?}", inner);
+		println!("{:#?}", patch);
+	}
 }
