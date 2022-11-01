@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display};
 use std::future::Future;
 use std::io::BufRead;
 use std::ops::{Deref, Range};
@@ -12,7 +12,7 @@ use tracing::warn;
 use crate::read_or_none;
 use crate::util::iter::AsyncIterator;
 use crate::util::peekable_reader::PeekableLine;
-use crate::util::string::{StringExt, swap_byte};
+use crate::util::string::StringExt;
 
 pub struct GitDiffParser {
 	_child: Child,
@@ -258,7 +258,10 @@ impl Patch {
 						patch_idx = Vec::with_capacity(16);
 					}
 					diff_offset = match DiffOffset::parse(peek) {
-						Some(it) => { it }
+						Some(it) => {
+							off += _peek.len() + 1;
+							it
+						}
 						None => {
 							warn!("Illegal offset info {:?}",peek);
 							return Err(diff);
@@ -292,7 +295,7 @@ impl Patch {
 			}
 
 			let start = off;
-			off += _peek.len();
+			off += _peek.len() + 1;
 			patch_idx.push(PatchIndex {
 				typ: match _peek.chars().next() {
 					Some(' ') => DiffType::None,
@@ -328,7 +331,7 @@ impl Patch {
 			offset,
 			index,
 			content_ptr,
-			contents: &self.raw_diff[content_ptr..content_end],
+			contents: &self.raw_diff[content_ptr..=content_end],
 		})
 	}
 
@@ -338,7 +341,7 @@ impl Patch {
 		Some(&self.raw_diff[offset])
 	}
 
-	fn normalize_patch(&mut self, patch: usize) {
+	pub fn normalize_patch(&mut self, patch: usize) {
 		let mut swap_idx = (0, 0);
 		let mut swap_line = (0, 0);
 		{
@@ -347,14 +350,15 @@ impl Patch {
 			};
 			if index.len() > 2 {
 				let first_remove = index.iter().position(|it| it.typ == DiffType::Remove);
-				let last_add = index.iter().rposition(|it| it.typ == DiffType::Add);
+				let last_add = index.iter().rposition(|it| it.typ == DiffType::Add).map(|it| it + 1);
 				if let (Some(first), Some(last)) = (first_remove, last_add) {
 					if let (Some(left), Some(right)) = (self.get_index(patch, first), self.get_index(patch, last)) {
-						if left == right {
+						if left.drop(1) == right.drop(1) {
+							println!("SWAP");
 							swap_line.0 = first;
 							swap_line.1 = last;
 							swap_idx.0 = index.get(first).unwrap().start;
-							swap_idx.1 = index.get(last).unwrap().end;
+							swap_idx.1 = index.get(last).unwrap().start;
 						}
 					}
 				}
@@ -362,7 +366,8 @@ impl Patch {
 		}
 
 		if swap_line.1 != 0 && swap_idx.1 != 0 {
-			swap_byte(&mut self.raw_diff, swap_idx.0, swap_idx.1);
+			self.raw_diff.replace_range(swap_idx.0..=swap_idx.0, " ");
+			self.raw_diff.replace_range(swap_idx.1..=swap_idx.1, "+");
 			if let Some((_, index)) = self.index.get_mut(patch) {
 				index.get_mut(swap_line.0).unwrap().typ = DiffType::None;
 				index.get_mut(swap_line.1).unwrap().typ = DiffType::Add;
